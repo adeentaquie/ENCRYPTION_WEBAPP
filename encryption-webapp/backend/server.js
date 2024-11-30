@@ -27,19 +27,17 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-// Encryption Function
-function encrypt(text, key, iv) {
+// Encryption Function for Binary Data
+function encryptBinary(data, key, iv) {
     const cipher = crypto.createCipheriv(algorithm, Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
+    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
     return encrypted;
 }
 
-// Decryption Function
-function decrypt(encryptedData, key, iv) {
+// Decryption Function for Binary Data
+function decryptBinary(encryptedData, key, iv) {
     const decipher = crypto.createDecipheriv(algorithm, Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
-    let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
+    const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
     return decrypted;
 }
 
@@ -61,8 +59,8 @@ app.post('/upload', (req, res) => {
         }
 
         try {
-            const data = fs.readFileSync(filePath, 'utf8');
-            const encryptedData = encrypt(data, key, iv);
+            const data = fs.readFileSync(filePath);
+            const encryptedData = encryptBinary(data, key, iv);
             const encryptedFilePath = `${filePath}.enc`;
 
             fs.writeFileSync(encryptedFilePath, encryptedData);
@@ -73,48 +71,11 @@ app.post('/upload', (req, res) => {
                 downloadLink: `/download?file=${path.basename(encryptedFilePath)}`,
                 key: key,
                 iv: iv,
-                filePath: path.basename(encryptedFilePath), // Include filename for email
+                filePath: path.basename(encryptedFilePath),
             });
         } catch (error) {
             res.status(500).send('Encryption failed: ' + error.message);
         }
-    });
-});
-
-// Email Route to Send the Encrypted File
-app.post('/send-email', (req, res) => {
-    const { recipientEmail, filePath } = req.body;
-
-    if (!recipientEmail || !filePath) {
-        return res.status(400).send('Missing recipient email or file path.');
-    }
-
-    const fullFilePath = path.join(__dirname, 'uploads', filePath); // Ensure correct path
-
-    // Check if the file exists
-    if (!fs.existsSync(fullFilePath)) {
-        return res.status(404).send('File not found.');
-    }
-
-    const mailOptions = {
-        from: 'adeentaquie2002@gmail.com',
-        to: recipientEmail,
-        subject: 'Encrypted File',
-        text: 'Please find the encrypted file attached.',
-        attachments: [
-            {
-                path: fullFilePath, // Correct path to the file
-            },
-        ],
-    };
-
-    transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-            console.error('Email send error:', error.message);
-            return res.status(500).send('Failed to send email.');
-        }
-        console.log('Email sent:', info.response);
-        res.send('Email sent successfully!');
     });
 });
 
@@ -138,9 +99,9 @@ app.post('/decrypt', (req, res) => {
         }
 
         try {
-            const encryptedData = fs.readFileSync(filePath, 'utf8');
-            const decryptedData = decrypt(encryptedData, key, iv);
-            const decryptedFilePath = filePath.replace('.enc', '-decrypted.txt');
+            const encryptedData = fs.readFileSync(filePath);
+            const decryptedData = decryptBinary(encryptedData, key, iv);
+            const decryptedFilePath = filePath.replace('.enc', '-decrypted');
 
             fs.writeFileSync(decryptedFilePath, decryptedData);
             console.log('Decrypted file path:', decryptedFilePath);
@@ -152,6 +113,48 @@ app.post('/decrypt', (req, res) => {
         } catch (error) {
             res.status(500).send('Decryption failed: ' + error.message);
         }
+    });
+});
+
+// Email Route to Send the Encrypted File with Key and IV
+app.post('/send-email', (req, res) => {
+    const { recipientEmail, filePath, key, iv } = req.body;
+
+    if (!recipientEmail || !filePath || !key || !iv) {
+        return res.status(400).send('Missing recipient email, file path, key, or IV.');
+    }
+
+    const fullFilePath = path.join(__dirname, 'uploads', filePath);
+
+    if (!fs.existsSync(fullFilePath)) {
+        return res.status(404).send('File not found.');
+    }
+
+    const mailOptions = {
+        from: 'adeentaquie2002@gmail.com',
+        to: recipientEmail,
+        subject: 'Encrypted File with Key and IV',
+        text: `Please find the encrypted file attached.
+
+Encryption Details:
+- Key: ${key}
+- Initialization Vector (IV): ${iv}
+
+Save these details securely, as you will need them for decryption.`,
+        attachments: [
+            {
+                path: fullFilePath,
+            },
+        ],
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+        if (error) {
+            console.error('Email send error:', error.message);
+            return res.status(500).send('Failed to send email.');
+        }
+        console.log('Email sent:', info.response);
+        res.send('Email sent successfully with key and IV!');
     });
 });
 
